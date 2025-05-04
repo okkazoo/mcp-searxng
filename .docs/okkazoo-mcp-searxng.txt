@@ -1,0 +1,777 @@
+Directory structure:
+└── okkazoo-mcp-searxng/
+    ├── README.md
+    ├── Dockerfile
+    ├── index.ts
+    ├── LICENSE
+    ├── package.json
+    ├── smithery.yaml
+    ├── tsconfig.json
+    ├── .dockerignore
+    ├── scripts/
+    │   └── update-version.js
+    └── .github/
+        └── workflows/
+            ├── docker-publish.yml
+            └── npm-publish.yml
+
+================================================
+FILE: README.md
+================================================
+# SearXNG MCP Server
+
+An [MCP server](https://modelcontextprotocol.io/introduction) implementation that integrates the [SearXNG](https://docs.searxng.org) API, providing web search capabilities.
+
+<a href="https://glama.ai/mcp/servers/0j7jjyt7m9"><img width="380" height="200" src="https://glama.ai/mcp/servers/0j7jjyt7m9/badge" alt="SearXNG Server MCP server" /></a>
+
+[![smithery badge](https://smithery.ai/badge/@ihor-sokoliuk/server-searxng)](https://smithery.ai/server/@ihor-sokoliuk/server-searxng)
+
+## Features
+
+- **Web Search**: General queries, news, articles, with pagination.
+- **Pagination**: Control which page of results to retrieve.
+- **Time Filtering**: Filter results by time range (day, month, year).
+- **Language Selection**: Filter results by preferred language.
+- **Safe Search**: Control content filtering level for search results.
+
+## Tools
+
+- **searxng_web_search**
+  - Execute web searches with pagination
+  - Inputs:
+    - `query` (string): The search query. This string is passed to external search services.
+    - `pageno` (number, optional): Search page number, starts at 1 (default 1)
+    - `time_range` (string, optional): Filter results by time range - one of: "day", "month", "year" (default: none)
+    - `language` (string, optional): Language code for results (e.g., "en", "fr", "de") or "all" (default: "all")
+    - `safesearch` (number, optional): Safe search filter level (0: None, 1: Moderate, 2: Strict) (default: instance setting)
+
+- **web_url_read**
+  - Read and convert the content from a URL to markdown
+  - Inputs:
+    - `url` (string): The URL to fetch and process
+
+## Configuration
+
+### Setting the SEARXNG_URL
+
+1. Choose a SearxNG instance from the [list of public instances](https://searx.space/) or use your local environment.
+2. Set the `SEARXNG_URL` environment variable to the instance URL.
+3. The default `SEARXNG_URL` value is `http://localhost:8080`.
+
+### Usage with Claude Desktop
+
+### Installing via Smithery
+
+To install SearxNG Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@ihor-sokoliuk/server-searxng):
+
+```bash
+npx -y @smithery/cli install @ihor-sokoliuk/server-searxng --client claude
+```
+
+### [NPX](https://www.npmjs.com/package/mcp-searxng)
+
+```json
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-searxng"
+      ],
+      "env": {
+        "SEARXNG_URL": "YOUR_SEARXNG_INSTANCE_URL"
+      }
+    }
+  }
+}
+```
+
+### [NPM](https://www.npmjs.com/package/mcp-searxng)
+
+```bash
+npm install -g mcp-searxng
+```
+
+And then in your MCP config file:
+
+```json
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "mcp-searxng",
+      "env": {
+        "SEARXNG_URL": "YOUR_SEARXNG_INSTANCE_URL"
+      }
+    }
+  }
+}
+```
+
+### Docker
+
+#### Using [Pre-built Image from Docker Hub](https://hub.docker.com/r/isokoliuk/mcp-searxng)
+
+```bash
+docker pull isokoliuk/mcp-searxng:latest
+```
+
+Add this to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "SEARXNG_URL",
+        "isokoliuk/mcp-searxng:latest"
+      ],
+      "env": {
+        "SEARXNG_URL": "YOUR_SEARXNG_INSTANCE_URL"
+      }
+    }
+  }
+}
+```
+
+#### Build Locally
+
+```bash
+docker build -t mcp-searxng:latest -f Dockerfile .
+```
+
+#### Use
+
+Add this to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "SEARXNG_URL",
+        "mcp-searxng:latest"
+      ],
+      "env": {
+        "SEARXNG_URL": "YOUR_SEARXNG_INSTANCE_URL"
+      }
+    }
+  }
+}
+```
+
+
+## License
+
+This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License. For more details, please see the LICENSE file in the project repository.
+
+
+
+================================================
+FILE: Dockerfile
+================================================
+FROM node:slim AS builder
+
+WORKDIR /app
+
+COPY ./ /app
+
+RUN --mount=type=cache,target=/root/.npm npm install
+
+FROM node:slim AS release
+
+WORKDIR /app
+
+COPY --from=builder /app/dist /app/dist
+COPY --from=builder /app/package.json /app/package.json
+COPY --from=builder /app/package-lock.json /app/package-lock.json
+
+ENV NODE_ENV=production
+
+RUN npm ci --ignore-scripts --omit-dev
+
+ENTRYPOINT ["node", "dist/index.js"]
+
+
+================================================
+FILE: index.ts
+================================================
+#!/usr/bin/env node
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  Tool,
+} from "@modelcontextprotocol/sdk/types.js";
+import { NodeHtmlMarkdown } from "node-html-markdown";
+
+// Use a static version string that will be updated by the version script
+const packageVersion = "0.4.6";
+
+const WEB_SEARCH_TOOL: Tool = {
+  name: "searxng_web_search",
+  description:
+    "Performs a web search using the SearXNG API, ideal for general queries, news, articles, and online content. " +
+    "Use this for broad information gathering, recent events, or when you need diverse web sources.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "The search query. This is the main input for the web search",
+      },
+      pageno: {
+        type: "number",
+        description: "Search page number (starts at 1)",
+        default: 1,
+      },
+      time_range: {
+        type: "string",
+        description: "Time range of search (day, month, year)",
+        enum: ["day", "month", "year"],
+        default: "",
+      },
+      language: {
+        type: "string",
+        description:
+          "Language code for search results (e.g., 'en', 'fr', 'de'). Default is instance-dependent.",
+        default: "all",
+      },
+      safesearch: {
+        type: "string",
+        description:
+          "Safe search filter level (0: None, 1: Moderate, 2: Strict)",
+        enum: ["0", "1", "2"],
+        default: "0",
+      },
+    },
+    required: ["query"],
+  },
+};
+
+const READ_URL_TOOL: Tool = {
+  name: "web_url_read",
+  description:
+    "Read the content from an URL. " +
+    "Use this for further information retrieving to understand the content of each URL.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      url: {
+        type: "string",
+        description: "URL",
+      },
+    },
+    required: ["url"],
+  },
+};
+
+// Server implementation
+const server = new Server(
+  {
+    name: "ihor-sokoliuk/mcp-searxng",
+    version: packageVersion,
+  },
+  {
+    capabilities: {
+      resources: {},
+      tools: {
+        searxng_web_search: {
+          description: WEB_SEARCH_TOOL.description,
+          schema: WEB_SEARCH_TOOL.inputSchema,
+        },
+        web_url_read: {
+          description: READ_URL_TOOL.description,
+          schema: READ_URL_TOOL.inputSchema,
+        },
+      },
+    },
+  }
+);
+
+interface SearXNGWeb {
+  results: Array<{
+    title: string;
+    content: string;
+    url: string;
+  }>;
+}
+
+function isSearXNGWebSearchArgs(args: unknown): args is {
+  query: string;
+  pageno?: number;
+  time_range?: string;
+  language?: string;
+  safesearch?: string;
+} {
+  return (
+    typeof args === "object" &&
+    args !== null &&
+    "query" in args &&
+    typeof (args as { query: string }).query === "string"
+  );
+}
+
+async function performWebSearch(
+  query: string,
+  pageno: number = 1,
+  time_range?: string,
+  language: string = "all",
+  safesearch?: string
+) {
+  const searxngUrl = process.env.SEARXNG_URL || "http://localhost:8080";
+  const url = new URL(`${searxngUrl}/search`);
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("pageno", pageno.toString());
+
+  if (
+    time_range !== undefined &&
+    ["day", "month", "year"].includes(time_range)
+  ) {
+    url.searchParams.set("time_range", time_range);
+  }
+
+  if (language && language !== "all") {
+    url.searchParams.set("language", language);
+  }
+
+  if (safesearch !== undefined && ["0", "1", "2"].includes(safesearch)) {
+    url.searchParams.set("safesearch", safesearch);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `SearXNG API error: ${response.status} ${
+        response.statusText
+      }\n${await response.text()}`
+    );
+  }
+
+  const data = (await response.json()) as SearXNGWeb;
+
+  const results = (data.results || []).map((result) => ({
+    title: result.title || "",
+    content: result.content || "",
+    url: result.url || "",
+  }));
+
+  return results
+    .map((r) => `Title: ${r.title}\nDescription: ${r.content}\nURL: ${r.url}`)
+    .join("\n\n");
+}
+
+async function fetchAndConvertToMarkdown(
+  url: string,
+  timeoutMs: number = 10000
+) {
+  // Create an AbortController instance
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    // Fetch the URL with the abort signal
+    const response = await fetch(url, {
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch the URL: ${response.statusText}`);
+    }
+
+    // Retrieve HTML content
+    const htmlContent = await response.text();
+
+    // Convert HTML to Markdown
+    const markdownContent = NodeHtmlMarkdown.translate(htmlContent);
+
+    return markdownContent;
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+    console.error("Error:", error.message);
+    throw error;
+  } finally {
+    // Clean up the timeout to prevent memory leaks
+    clearTimeout(timeoutId);
+  }
+}
+// Tool handlers
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [WEB_SEARCH_TOOL, READ_URL_TOOL],
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+  try {
+    const { name, arguments: args } = request.params;
+
+    if (!args) {
+      throw new Error("No arguments provided");
+    }
+
+    if (name === "searxng_web_search") {
+      if (!isSearXNGWebSearchArgs(args)) {
+        throw new Error("Invalid arguments for searxng_web_search");
+      }
+      const {
+        query,
+        pageno = 1,
+        time_range,
+        language = "all",
+        safesearch,
+      } = args;
+      const results = await performWebSearch(
+        query,
+        pageno,
+        time_range,
+        language,
+        safesearch
+      );
+      return {
+        content: [{ type: "text", text: results }],
+        isError: false,
+      };
+    }
+
+    if (name === "web_url_read") {
+      const { url } = args;
+      const result = await fetchAndConvertToMarkdown(url as string);
+      return {
+        content: [{ type: "text", text: result }],
+        isError: false,
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: `Unknown tool: ${name}` }],
+      isError: true,
+    };
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        },
+      ],
+      isError: true,
+    };
+  }
+});
+
+async function runServer() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+runServer().catch((error) => {
+  console.error("Fatal error running server:", error);
+  process.exit(1);
+});
+
+
+
+================================================
+FILE: LICENSE
+================================================
+MIT License
+
+Copyright (c) 2024 IS
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+================================================
+FILE: package.json
+================================================
+{
+    "name": "mcp-searxng",
+    "version": "0.4.6",
+    "description": "MCP server for SearXNG integration",
+    "license": "MIT",
+    "author": "Ihor Sokoliuk (https://github.com/ihor-sokoliuk)",
+    "homepage": "https://github.com/ihor-sokoliuk/mcp-searxng",
+    "bugs": "https://github.com/ihor-sokoliuk/mcp-searxng/issues",
+    "keywords": [
+        "mcp",
+        "modelcontextprotocol",
+        "searxng",
+        "search",
+        "web-search",
+        "claude",
+        "ai",
+        "pagination",
+        "smithery",
+        "url-reader"
+    ],
+    "type": "module",
+    "bin": {
+        "mcp-searxng": "dist/index.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=18"
+    },
+    "scripts": {
+        "build": "tsc && shx chmod +x dist/*.js",
+        "prepare": "npm run build",
+        "watch": "tsc --watch",
+        "postversion": "node scripts/update-version.js && git add index.ts && git commit --amend --no-edit"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "1.10.1",
+        "node-html-markdown": "^1.3.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.14.1",
+        "shx": "^0.4.0",
+        "typescript": "^5.8.3"
+    }
+}
+
+
+
+================================================
+FILE: smithery.yaml
+================================================
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - searxngUrl
+    properties:
+      searxngUrl:
+        type: string
+        description: The URL of the SearxNG instance to connect to.
+  commandFunction:
+    # A function that produces the CLI command to start the MCP on stdio.
+    |-
+    (config) => ({command: 'docker', args: ['run', '-i', '--rm', '-e', `SEARXNG_URL=${config.searxngUrl}`, 'mcp-searxng:latest']})
+
+
+================================================
+FILE: tsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "isolatedModules": true,
+    "declaration": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+
+
+================================================
+FILE: .dockerignore
+================================================
+# Build outputs
+dist/
+build/
+
+# Development files
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.roo/
+
+# Git files
+.git/
+.github/
+.gitignore
+
+# Docker files
+.dockerignore
+Dockerfile
+
+# Other
+.DS_Store
+*.log
+coverage/
+.env
+*.env.local
+
+
+================================================
+FILE: scripts/update-version.js
+================================================
+#!/usr/bin/env node
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+// Setup dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Use createRequire to load JSON files
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
+const version = packageJson.version;
+
+// Path to index.ts
+const indexPath = path.join(__dirname, '..', 'index.ts');
+
+// Read the file
+let content = fs.readFileSync(indexPath, 'utf8');
+
+// Define a static version string to replace
+const staticVersionRegex = /const packageVersion = "([\d\.]+|unknown)";/;
+
+// Replace with updated version from package.json
+if (staticVersionRegex.test(content)) {
+  content = content.replace(staticVersionRegex, `const packageVersion = "${version}";`);
+  
+  // Write the updated content
+  fs.writeFileSync(indexPath, content);
+  
+  console.log(`Updated version in index.ts to ${version}`);
+} else {
+  console.error('Could not find static version declaration in index.ts');
+  process.exit(1);
+}
+
+
+================================================
+FILE: .github/workflows/docker-publish.yml
+================================================
+name: Publish Docker image
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  push_to_registry:
+    name: Push Docker image to Docker Hub
+    runs-on: self-hosted
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: isokoliuk/mcp-searxng
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+
+================================================
+FILE: .github/workflows/npm-publish.yml
+================================================
+name: Publish NPM Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-publish:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org/'
+      
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      
+      - name: Build package
+        run: npm run build
+      
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+

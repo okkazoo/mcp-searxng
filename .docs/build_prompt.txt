@@ -1,0 +1,35 @@
+Extend the `searxng_web_search` tool in the downloaded `okkazoo/mcp-searxng` repo to support the following parameters:
+
+  - query: str  
+  - pageno: int = 1  
+  - time_range: Optional[str] = None  
+  - language: Optional[str] = "en"  
+  - safesearch: Optional[int] = 1  
+  - engines: Optional[str] = None  
+  - categories: Optional[str] = None  
+  - image_proxy: Optional[bool] = False  
+
+Then, Dockerize it:
+  (1) Add a Dockerfile that runs `searxng_mcp.py` and installs the packages: `mcp-ai`, `requests`, `pydantic-settings`.  
+  (2) Add a `.env` file with the line: `SEARXNG_URL=http://host.docker.internal:8080`.  
+  (3) Ensure it builds using this image tag: `okkazoo/mcp-searxng:latest`.  
+
+The container must be compatible with this MCP config:
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "SEARXNG_URL",
+        "okkazoo/mcp-searxng:latest"
+      ],
+      "env": {
+        "SEARXNG_URL": "YOUR_SEARXNG_INSTANCE_URL"
+      }
+    }
+  }
+}

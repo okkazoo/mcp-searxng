@@ -1,0 +1,21 @@
+mcp-searxng
+|-- .dockerignore
+|-- .docs
+|   |-- build_prompt.txt
+|   |-- mcp-searxng_tree.txt
+|   |-- mcp_client_info.md
+|   |-- mcp_server_info.md
+|   |-- okkazoo-mcp-searxng.txt
+|   |-- repo_mcp-searxng.txt
+|-- .git
+|-- .github
+|-- .gitignore
+|-- Dockerfile
+|-- index.ts
+|-- LICENSE
+|-- package.json
+|-- README.md
+|-- scripts
+|   |-- update-version.js
+|-- smithery.yaml
+|-- tsconfig.json
